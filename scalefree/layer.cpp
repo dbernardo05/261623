@@ -90,58 +90,79 @@ int Layer::addSynapse(int no_wts, Param* param){
 	double lambda = 5.0;
 	double C = (lambda - 1)*pow((double)minconn,lambda - 1);
 	double totalprob = 0;
+	//scalefreeprob[i]: cumulative (unnormalised) probability of a degree <= minconn + i
 	double *scalefreeprob = new double[maxconn - minconn + 1];
 	j = minconn;
 	for(i = 0; i < (maxconn - minconn + 1); i++){
-		scalefreeprob[i] =  C*1/pow((double)j,lambda);
+		totalprob += C*1/pow((double)j,lambda);
+		scalefreeprob[i] = totalprob;
 		j = j+1;
-		totalprob += scalefreeprob[i];
 		//cout << scalefreeprob[i] << " ";
 	}
 	//cout << endl;
 	//cout << totalprob << endl;
 	//exit(0);
+	vector<int> candidates;
+	int kept, pick;
 //#pragma omp parallel for private(i,j,k,p,value,count,m,n)
 	totalprob = 0;
 	for(i = 0; i < rows; i++){
 		for(j = 0; j < clms; j++){
 			count = 0;
 			in_Glut = 0;
-			value = scalefreeprob[0]*drand48();
-			for(k = maxconn-minconn+1; k >= 0; k--){
-				if(value < scalefreeprob[k]){
-					d = (k+1)*minconn;
+			//draw the degree d from P(d) ~ d^-lambda, minconn <= d <= maxconn (inverse CDF)
+			value = scalefreeprob[maxconn - minconn]*drand48();
+			for(k = 0; k < maxconn - minconn; k++){
+				if(value < scalefreeprob[k])
 					break;
-				}
 			}
+			d = minconn + k;
+			//list every neuron that meets the connection criteria
+			candidates.clear();
 			for(m = 0; m < rows; m++){
 				for(n = 0; n < clms; n++){
 					//initial connection criteria: distance between 2 neurons
 					//no self feedback
 					value = drand48();
-					if((count < d) && (value < exp(-((i - m)*(i - m))/(1.5*d)-((j - n)*(j - n))/(1.5*d))) && (sqrt((i - m)*(i - m) + (j - n)*(j - n)) < d) && (!(i == m && j == n)) && (!(!NeuronLayer[i][j].excitatory && !NeuronLayer[m][n].excitatory)) ){
-					ConnectionMatrix[i][j].push_back(Synapse());
-					ConnectionMatrix[i][j][count].row = m;
-					ConnectionMatrix[i][j][count].clm = n;
-					value = drand48();
-					ConnectionMatrix[i][j][count].weight = value;
-					trackweight[i*rows+j][m*rows+n] = value;
-					if(NeuronLayer[m][n].excitatory){
-						ConnectionMatrix[i][j][count].excitatory = true;
-						ConnectionMatrix[i][j][count].NRmax = (param->NRmax)*value;
-						ConnectionMatrix[i][j][count].tau	= 0;
-					}
-					else{
-						ConnectionMatrix[i][j][count].excitatory = false;
-						ConnectionMatrix[i][j][count].NRmax = 0;
-						ConnectionMatrix[i][j][count].tau	= 0;
-						ConnectionMatrix[i][j][count].NR    = 0;
-					}
-					in_Glut = in_Glut + ConnectionMatrix[i][j][count].NRmax;
-					count = count+1;
-					//fprintf(cFile,"%f ",value);
-					}					
+					if((value < exp(-((i - m)*(i - m))/(1.5*d)-((j - n)*(j - n))/(1.5*d))) && (sqrt((i - m)*(i - m) + (j - n)*(j - n)) < d) && (!(i == m && j == n)) && (!(!NeuronLayer[i][j].excitatory && !NeuronLayer[m][n].excitatory)) )
+						candidates.push_back(m*clms + n);
 				}
+			}
+			//connect to d of them, chosen at random (partial Fisher-Yates shuffle). Keeping
+			//the first d found by the row-by-row scan took every input from the rows above.
+			kept = candidates.size();
+			if(kept > d)
+				kept = (int)d;
+			for(k = 0; k < kept; k++){
+				value = drand48();
+				pick = k + (int)(value*(candidates.size() - k));
+				if(pick >= (int)candidates.size())	//drand48() can return 1 under WIN32
+					pick = candidates.size() - 1;
+				swap(candidates[k], candidates[pick]);
+			}
+			for(k = 0; k < kept; k++){
+				m = candidates[k]/clms;
+				n = candidates[k]%clms;
+				ConnectionMatrix[i][j].push_back(Synapse());
+				ConnectionMatrix[i][j][count].row = m;
+				ConnectionMatrix[i][j][count].clm = n;
+				value = drand48();
+				ConnectionMatrix[i][j][count].weight = value;
+				trackweight[i*rows+j][m*rows+n] = value;
+				if(NeuronLayer[m][n].excitatory){
+					ConnectionMatrix[i][j][count].excitatory = true;
+					ConnectionMatrix[i][j][count].NRmax = (param->NRmax)*value;
+					ConnectionMatrix[i][j][count].tau	= 0;
+				}
+				else{
+					ConnectionMatrix[i][j][count].excitatory = false;
+					ConnectionMatrix[i][j][count].NRmax = 0;
+					ConnectionMatrix[i][j][count].tau	= 0;
+					ConnectionMatrix[i][j][count].NR    = 0;
+				}
+				in_Glut = in_Glut + ConnectionMatrix[i][j][count].NRmax;
+				count = count+1;
+				//fprintf(cFile,"%f ",value);
 			}
 			cout << count << " " ;
 			//if(count < d)
@@ -286,7 +307,7 @@ int Layer::recordPotential(int iterations){
 	potential = 0.0;
 	for(i = 0; i < rows; i++){
 		for(j = 0; j < clms; j++){
-			distance = ((double)1/sqrt((double)2*M_PI*sigma*sigma))*exp(-((center_i - i)*(center_i - i) + (center_j - j)*(center_j - j))/(double)2*sigma*sigma);
+			distance = ((double)1/sqrt((double)2*M_PI*sigma*sigma))*exp(-((center_i - i)*(center_i - i) + (center_j - j)*(center_j - j))/((double)2*sigma*sigma));
 			potential += distance*NeuronLayer[i][j].E;
 		}
 	}

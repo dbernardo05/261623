@@ -58,14 +58,14 @@ int main(){
 	srand48(time(NULL));
 	//srand48(1);
 #endif
-	Param* param;
-	parse(param);
+	Param param;
+	parse(&param);
 	//Specify the layer
 	Layer pyramidLayer(100,100);
 	//Add neurons
-	pyramidLayer.addNeurons(param);
+	pyramidLayer.addNeurons(&param);
 	//Add connections
-	pyramidLayer.addSynapse(0, param);
+	pyramidLayer.addSynapse(0, &param);
 	//Start simulation
 	pyramidLayer.stimulateNeurons();	
 	clock_t end = clock();

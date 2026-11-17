@@ -57,11 +57,11 @@ int main(){
 	srand48(time(NULL));
 	//srand48(1);
 #endif
-	Param* param;
-	parse(param);
+	Param param;
+	parse(&param);
 	Layer pyramidLayer(100,100);
-	pyramidLayer.addNeurons(param);
-	pyramidLayer.addSynapse(0, param);
+	pyramidLayer.addNeurons(&param);
+	pyramidLayer.addSynapse(0, &param);
 	pyramidLayer.stimulateNeurons();	
 	clock_t end = clock();
 	double time_secs = double(end - begin) / CLOCKS_PER_SEC;

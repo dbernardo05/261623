@@ -20,7 +20,7 @@ Neuron::Neuron(){
 		Gi_table.push_back( (Ti1 * Ti2 / (Ti1 - Ti2)) * (exp(-i/Ti1) - exp(-i/Ti2)) );
 	}
 	for(int i = 1; i <= 100; i++)
-		firing_Prob.push_back( exp(-1000*(i/100 - 1)*(i/100 - 1)) );
+		firing_Prob.push_back( exp(-1000*(i/100.0 - 1)*(i/100.0 - 1)) );
         for(int i = 1; i <= 3; i++)
 		glutamate_Prob.push_back( exp(-1000*(i/4 - 1)*(i/4 - 1)) );
 }
@@ -53,8 +53,10 @@ int Neuron::computePotential(vector<Synapse> &preSynapses, double SC, int time){
 	double mean = 0, stddev = 1.0, value, dist;
 	int prob_Index;
 	
-	default_random_engine generator;
-	normal_distribution<double> distribution(mean,stddev);
+	//one noise generator per OpenMP thread, seeded once on the thread's first call,
+	//so that every call draws a new value
+	static thread_local mt19937 generator(random_device{}());
+	static thread_local normal_distribution<double> distribution(mean,stddev);
 	for(i = 0; i < preSynapses.size(); i++){
 		//synaptic delay
 		dist = sqrt((row - preSynapses[i].row)*(row - preSynapses[i].row) + (clm - preSynapses[i].clm)*(clm - preSynapses[i].clm));
@@ -70,7 +72,7 @@ int Neuron::computePotential(vector<Synapse> &preSynapses, double SC, int time){
 				Ge += Ge_table[j-round(dist)]*preSynapses[i].psps[j];
 				//to keep track of glutamate vesicles released before the neuron fires
 				if(preSynapses[i].psps[j])
-					glutamate += 1;//preSynapses[i].psps[j];
+					glutamate += round(preSynapses[i].psps[j]/preSynapses[i].weight);//a slot holds weight x vesicles
 			}
 		}
 		else{
@@ -133,7 +135,7 @@ int Neuron::glutamateinitialize(vector<Synapse> &preSynapses,Neuron **NeuronLaye
 }
 
 int Neuron::glutamaterelease(vector<Synapse> &preSynapses,Neuron **NeuronLayer,int iterations){
-	int i,j,P_index;
+	int i,P_index;
 	double p1, p2, value, Glu_Rel;
 	p2 = exp(-(double)1/TauRelease);
 	//glutamate = 0;
@@ -156,12 +158,8 @@ int Neuron::glutamaterelease(vector<Synapse> &preSynapses,Neuron **NeuronLayer,i
 					Glu_Rel = round(preSynapses[i].NR*pow(p2,4 - NeuronLayer[preSynapses[i].row][preSynapses[i].clm].P));
 					preSynapses[i].NR = preSynapses[i].NR - Glu_Rel;
 					//glutamate = glutamate + Glu_Rel;
-					for(j = 0; j < Glu_Rel; j++){
-						value = preSynapses[i].weight;
-						preSynapses[i].psps[0] = value;
-						if(j != Glu_Rel)
-							preSynapses[i].psps.insert(preSynapses[i].psps.begin(),0);
-					}
+					//all Glu_Rel vesicles are released in this time step, so they go in the current slot
+					preSynapses[i].psps[0] += Glu_Rel*preSynapses[i].weight;
 					preSynapses[i].tau = 0;
 					if(preSynapses[i].NR  < 0)
 						preSynapses[i].NR  = 0;
@@ -177,12 +175,8 @@ int Neuron::glutamaterelease(vector<Synapse> &preSynapses,Neuron **NeuronLayer,i
 					Glu_Rel = round(preSynapses[i].NR*p2);
 					preSynapses[i].NR = preSynapses[i].NR - Glu_Rel;
 					//glutamate = glutamate + Glu_Rel;
-					for(j = 0; j < Glu_Rel; j++){
-						value = preSynapses[i].weight;
-						preSynapses[i].psps[0] = value;
-						if(j != Glu_Rel)
-							preSynapses[i].psps.insert(preSynapses[i].psps.begin(),0);
-					}
+					//all Glu_Rel vesicles are released in this time step, so they go in the current slot
+					preSynapses[i].psps[0] += Glu_Rel*preSynapses[i].weight;
 
 					preSynapses[i].tau = 0;
 					if(preSynapses[i].NR  < 0)

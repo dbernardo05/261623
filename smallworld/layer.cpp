@@ -292,7 +292,7 @@ int Layer::recordPotential(int iterations){
 	potential = 0.0;
 	for(i = 0; i < rows; i++){
 		for(j = 0; j < clms; j++){
-			distance = ((double)1/sqrt((double)2*M_PI*sigma*sigma))*exp(-((center_i - i)*(center_i - i) + (center_j - j)*(center_j - j))/(double)2*sigma*sigma);
+			distance = ((double)1/sqrt((double)2*M_PI*sigma*sigma))*exp(-((center_i - i)*(center_i - i) + (center_j - j)*(center_j - j))/((double)2*sigma*sigma));
 			potential += distance*NeuronLayer[i][j].E;
 		}
 	}
