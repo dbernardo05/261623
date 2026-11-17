@@ -1,3 +1,4 @@
+#include "../run_output.h"
 #include <iostream>
 #include <algorithm>
 #include <vector>
@@ -348,8 +349,7 @@ public:
 	Layer(int row, int clm);
 	int addNeurons();
 	int addSynapse(int no_wts);
-	int stimulateNeurons();
-	int recordPotential(int iterations);
+	int stimulateNeurons(bool perNeuronOutput = false);
 };
 
 Layer::Layer(int row, int clm){
@@ -563,41 +563,31 @@ int Layer::addSynapse(int no_wts){
 	return 0;
 }
 
-int Layer::stimulateNeurons(){
+int Layer::stimulateNeurons(bool perNeuronOutput){
 	int index, iterations;
-	int i, j, espikes, ispikes;
-    double avg_glutamate;
-	FILE *pFile = fopen("spikes.txt","w");
-	FILE *eFile = fopen("potential.txt","w");
-	FILE *gFile = fopen("glutamate.txt","w");
-	FILE *spFile = fopen("spikepatterns.txt","w");
+	int i, j;
+	EpochState epoch(0, 0, rows * clms);
+	RunOutput output("", rows, clms, 2.0, epoch);
+	writeEdges("", rows, clms, ConnectionMatrix);
+	const auto potentialFile = openOutputFile("potential.txt", perNeuronOutput);
+	const auto glutamateFile = openOutputFile("glutamate.txt", perNeuronOutput);
+	const auto spikePatternsFile = openOutputFile("spikepatterns.txt", perNeuronOutput);
 	//variable index can be used to apply a stimulating current to random neuron(s) in each iteration
 	for(iterations = 0; iterations < 60000; iterations++){
 		index = rand()%(rows*clms);
-		espikes = 0;
-		ispikes = 0;
-                avg_glutamate = 0;
-                //loop to record the average glutamate released and the number of excitatory and inhibitory neurons firing
-		for(i = 0; i < rows; i++){
-			for(j = 0; j < clms; j++){
-                //if((iterations > 5000) && (iterations < 15000))
-				//fprintf(eFile,"%f ", NeuronLayer[i][j].E);
-				//fprintf(gFile,"%f ", NeuronLayer[i][j].glutamate);
-				//fprintf(spFile,"%f ",NeuronLayer[i][j].S);
-                avg_glutamate += NeuronLayer[i][j].glutamate;
-				if((i%5 == 0) && (j%5 == 0))
-					ispikes += NeuronLayer[i][j].S;
-				else
-					espikes += NeuronLayer[i][j].S;
+		output.recordSpikes(iterations, NeuronLayer);
+		if (perNeuronOutput && iterations > 5000 && iterations < 15000) {
+			for(i = 0; i < rows; i++){
+				for(j = 0; j < clms; j++){
+					fprintf(potentialFile.get(), "%f ", NeuronLayer[i][j].E);
+					fprintf(glutamateFile.get(), "%f ", NeuronLayer[i][j].glutamate);
+					fprintf(spikePatternsFile.get(), "%d ", NeuronLayer[i][j].S);
+				}
 			}
+			fputc('\n', potentialFile.get());
+			fputc('\n', glutamateFile.get());
+			fputc('\n', spikePatternsFile.get());
 		}
-        //if((iterations > 5000) && (iterations < 15000))
-        //fprintf(eFile,"\n");
-		//fprintf(gFile,"\n");
-		//fprintf(spFile,"\n");
-		//cout << espikes << " " << ispikes << " ";// << endl;
-                //fprintf(gFile,"%f\n", avg_glutamate/(rows*clms));
-		fprintf(pFile,"%d %d %d\n",iterations,espikes,ispikes);
 #pragma omp parallel for private(i,j)
 		for(i = 0; i < rows; i++){
 			for(j = 0; j < clms; j++){				
@@ -615,35 +605,14 @@ int Layer::stimulateNeurons(){
 			}
 		}
 #pragma omp barrier
-		recordPotential(iterations);
+		output.recordField(iterations, NeuronLayer, true);
 	}
-	fclose(eFile);
-	fclose(gFile);
-	fclose(spFile);
-	fclose(pFile);
 	return 0;
 }
 
-int Layer::recordPotential(int iterations){
-	int i,j, center_i, center_j;
-	double distance, potential, sigma = 2;
-	center_i = rows/2;
-	center_j = clms/2;
-	//potential is assumed to be recorded from the center of the layer. 
-	//neuron membrane potentials are multiplied by a Gaussian centered at the center.
-	potential = 0.0;
-	for(i = 0; i < rows; i++){
-		for(j = 0; j < clms; j++){
-			distance = ((double)1/sqrt((double)2*M_PI*sigma*sigma))*exp(-((center_i - i)*(center_i - i) + (center_j - j)*(center_j - j))/(double)2*sigma*sigma);
-			potential += distance*NeuronLayer[i][j].E;
-		}
-	}
-	cout << potential << " " << iterations << endl;
-	return 0;
-}
+int main(int argc, char* argv[]){
+	const bool perNeuronOutput = perNeuronOutputRequested(argc, argv);
 
-int main(){
-	
 	//omp_set_num_threads(20);
 
 	//initialize random number generator
@@ -657,7 +626,7 @@ int main(){
 	Layer pyramidLayer(100,100);
 	pyramidLayer.addNeurons();
 	pyramidLayer.addSynapse(0);
-	pyramidLayer.stimulateNeurons();	
+	pyramidLayer.stimulateNeurons(perNeuronOutput);
 	clock_t end = clock();
 	double time_secs = double(end - begin) / CLOCKS_PER_SEC;
 	//cout << "Time in secs:" << " " << time_secs << endl;

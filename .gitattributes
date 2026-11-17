@@ -1,0 +1,4 @@
+# The deposited entry points use CRLF. Their backport patch preserves the original bytes.
+*/main.cpp whitespace=trailing-space,space-before-tab,cr-at-eol
+scalefree/main_scalefree.cpp whitespace=trailing-space,space-before-tab,cr-at-eol
+reference/recording.patch -text -whitespace

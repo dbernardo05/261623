@@ -46,24 +46,20 @@ int parse(Param* param)
   return 0;
 }
 
-int main(){
-	
+int main(int argc, char* argv[]){
+	const RunOptions options = parseRunOptions(argc, argv);
+
 	//omp_set_num_threads(20);
 	//initialize random number generator
 	srand (time(NULL));
 	//srand (1);
-	clock_t begin = clock();
 #ifndef WIN32
 	srand48(time(NULL));
 	//srand48(1);
 #endif
-	Param param;
-	parse(&param);
-	Layer pyramidLayer(100,100);
-	pyramidLayer.addNeurons(&param);
-	pyramidLayer.addSynapse(0, &param);
-	pyramidLayer.stimulateNeurons();	
-	clock_t end = clock();
-	double time_secs = double(end - begin) / CLOCKS_PER_SEC;
-	//cout << "Time in secs:" << " " << time_secs << endl;
+	Param param{};
+	if (options.resume.empty())
+		parse(&param);
+	Layer pyramidLayer(100,100, options.perNeuronOutput);
+	return pyramidLayer.simulate(param, options, Topology::smallworld);
 }

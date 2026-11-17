@@ -3,7 +3,7 @@ CCFLAGS = -std=c++11 -g -fopenmp
 
 macgregor:main_scalefree.o 
 	${COMPILER} ${CCFLAGS} -o macgregor main_scalefree.o 
-main_scalefree.o: main_scalefree.cpp 
+main_scalefree.o: main_scalefree.cpp ../run_output.h ../output_options.h
 	${COMPILER} ${CCFLAGS} -c main_scalefree.cpp  
 clean: 
 	rm -rf *.o macgregor

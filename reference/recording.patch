@@ -1,0 +1,647 @@
+diff --git a/uniform/main.cpp b/uniform/main.cpp
+--- a/uniform/main.cpp
++++ b/uniform/main.cpp
+@@ -48,27 +48,19 @@
+ }
+ 
+-int main(){
+-	
++int main(int argc, char* argv[]){
++	const RunOptions options = parseRunOptions(argc, argv);
++
+ 	//omp_set_num_threads(20);
+ 	//initialize random number generator
+ 	srand (time(NULL));
+ 	//srand (1);
+-	clock_t begin = clock();
+ #ifndef WIN32
+ 	srand48(time(NULL));
+ 	//srand48(1);
+ #endif
+-	Param* param;
+-	parse(param);
+-	//Specify the layer
+-	Layer pyramidLayer(100,100);
+-	//Add neurons
+-	pyramidLayer.addNeurons(param);
+-	//Add connections
+-	pyramidLayer.addSynapse(0, param);
+-	//Start simulation
+-	pyramidLayer.stimulateNeurons();	
+-	clock_t end = clock();
+-	double time_secs = double(end - begin) / CLOCKS_PER_SEC;
+-	//cout << "Time in secs:" << " " << time_secs << endl;
+-}
+\ No newline at end of file
++	Param param{};
++	if (options.resume.empty())
++		parse(&param);
++	Layer pyramidLayer(100,100, options.perNeuronOutput);
++	return pyramidLayer.simulate(param, options, Topology::uniform);
++}
+diff --git a/uniform/neuron.h b/uniform/neuron.h
+--- a/uniform/neuron.h
++++ b/uniform/neuron.h
+@@ -45,4 +45,5 @@
+ 
+ class Neuron{
++	friend class NetworkSnapshot;
+ 	//parameters from the MacGregor Neuron Model. 
+ 	//for details, refer: "A Model for Repetitive Firing in Neurons", MacGregor, R. J. and Oliver, R. M., Kybernetik, 1974.
+diff --git a/uniform/layer.h b/uniform/layer.h
+--- a/uniform/layer.h
++++ b/uniform/layer.h
+@@ -1,17 +1,21 @@
+ #include "neuron.h"
++#include "../run_options.h"
+ 
+ 
+ class Layer{
+ 	int rows, clms;
+-	double **availableGlutamate, **releasableGlutamate;
++	bool perNeuronOutput;
+ 	//NeuronLayer is a matrix of neurons
+-	Neuron **NeuronLayer;
++	Neuron **NeuronLayer = nullptr;
+ 	//ConnectionMatrix is a matrix of vectors; each vector contains the incoming synapses to the neuron at that location
+-	vector<Synapse> **ConnectionMatrix;
++	vector<Synapse> **ConnectionMatrix = nullptr;
++	void allocateConnections();
+ public:
+-	Layer(int row, int clm);
++	Layer(int row, int clm, bool perNeuronOutput = false);
+ 	int addNeurons(Param* param);
+ 	int addSynapse(int no_wts, Param* param);
+-	int stimulateNeurons();
+-	int recordPotential(int iterations);
++	~Layer();
++	Layer(const Layer&) = delete;
++	Layer& operator=(const Layer&) = delete;
++	int simulate(Param& param, const RunOptions& options, Topology topology);
+ };
+diff --git a/uniform/layer.cpp b/uniform/layer.cpp
+--- a/uniform/layer.cpp
++++ b/uniform/layer.cpp
+@@ -1,17 +1,10 @@
+ 
+ #include "layer.h"
++#include "../neuron_output.h"
+ 
+ double distribution_max;
+ 
+-Layer::Layer(int row, int clm){
+-	rows = row;
+-	clms = clm;
+-	availableGlutamate = new double*[row]();
+-	for(int i = 0; i < row; i++)
+-		availableGlutamate[i] = new double[clm]();
+-	releasableGlutamate = new double*[row]();
+-	for(int i = 0; i < row; i++)
+-		releasableGlutamate[i] = new double[clm]();
+-}
++Layer::Layer(int row, int clm, bool perNeuronOutput)
++    : rows(row), clms(clm), perNeuronOutput(perNeuronOutput) {}
+ //add Neurons to grid
+ int Layer::addNeurons(Param* param){
+@@ -29,6 +22,4 @@
+ 	for(i = 0; i < rows; i++){
+ 		for(j =0; j < clms; j++){
+-			availableGlutamate[i][j] = 0;
+-			releasableGlutamate[i][j] = 0;
+ 			NeuronLayer[i][j].row = i;
+ 			NeuronLayer[i][j].clm = j;		
+@@ -69,15 +60,9 @@
+ 	int i, j, k, m, n, count, connect;
+ 	double d = param->Neighborhood, value, value_uniform,p, in_Glut, wt;
+-	double **trackweight;
+-	trackweight = new double*[rows*clms]();
+-	for(int i = 0; i < rows*clms; i++)
+-		trackweight[i] = new double[rows*clms]();
+-	FILE *gmFile = fopen("glutamatemap.txt","w");
+-	FILE *igmFile = fopen("initialglutamatemap.txt","w");
+-	FILE *wtFile = fopen("weightmap.txt","w");
+-	ConnectionMatrix  = new vector<Synapse>*[rows]();
+-	for(i = 0; i < rows; i++){
+-		ConnectionMatrix[i] = new vector<Synapse>[clms]();
+-	}
++	const auto glutamateMap = openOutputFile("glutamatemap.txt", perNeuronOutput);
++	const auto initialGlutamateMap = openOutputFile("initialglutamatemap.txt", perNeuronOutput);
++	const auto weightMap = openOutputFile("weightmap.txt", perNeuronOutput);
++	vector<double> weightRow(perNeuronOutput ? rows * clms : 0);
++	allocateConnections();
+ 	
+ //#pragma omp parallel for private(i,j,k,p,value,count,m,n)
+@@ -100,5 +85,4 @@
+ 					value = drand48();
+ 					ConnectionMatrix[i][j][count].weight = value;
+-					trackweight[i*rows+j][m*rows+n] = value;
+ 					if(NeuronLayer[m][n].excitatory){
+ 						ConnectionMatrix[i][j][count].excitatory = true;
+@@ -112,5 +96,8 @@
+ 						ConnectionMatrix[i][j][count].NR    = 0;
+ 					}
+-					in_Glut = in_Glut + ConnectionMatrix[i][j][count].NRmax;
++					if (perNeuronOutput) {
++						weightRow[m * clms + n] = value;
++						in_Glut += ConnectionMatrix[i][j][count].NRmax;
++					}
+ 					count = count+1;
+ 					//fprintf(cFile,"%f ",value);
+@@ -119,7 +106,11 @@
+ 			}		
+   			//cout << count << " " ;
+-			//fprintf(gmFile,"%f ", in_Glut);
+-		}
+-		//fprintf(gmFile,"\n");
++			if (perNeuronOutput) {
++				fprintf(glutamateMap.get(), "%f ", in_Glut);
++				writeWeightRow(weightMap.get(), weightRow);
++			}
++		}
++		if (perNeuronOutput)
++			fputc('\n', glutamateMap.get());
+ 	}
+ //exit(0);	
+@@ -135,25 +126,21 @@
+ 			in_Glut = 0;
+ 			for(count = 0; count < ConnectionMatrix[i][j].size(); count++){
+-				in_Glut = in_Glut + ConnectionMatrix[i][j][count].NR;
++				if (perNeuronOutput)
++					in_Glut += ConnectionMatrix[i][j][count].NR;
+ 				if(ConnectionMatrix[i][j][count].excitatory)
+ 					NeuronLayer[ConnectionMatrix[i][j][count].row][ConnectionMatrix[i][j][count].clm].glutamate += ConnectionMatrix[i][j][count].NR;
+ 			}
+-			//fprintf(igmFile,"%f ", in_Glut);
+-		}
+-		//fprintf(igmFile,"\n");
+-	}
+-	for(i = 0; i < rows*clms; i++){
+-		for(j = 0; j < rows*clms; j++){
+-			//fprintf(wtFile,"%f ", trackweight[i][j]);
+-		}
+-		//fprintf(wtFile,"\n");
+-	}
+-	fclose(gmFile);
+-	fclose(igmFile);
+-	fclose(wtFile);
++			if (perNeuronOutput)
++				fprintf(initialGlutamateMap.get(), "%f ", in_Glut);
++		}
++		if (perNeuronOutput)
++			fputc('\n', initialGlutamateMap.get());
++	}
+ 	//exit(0);
+ 	return 0;
+ }
+-//main simulation loop
++
++// simulation.cpp supplies the recording-enabled loop for this build.
++#if 0
+ int Layer::stimulateNeurons(){
+ 	int index, iterations;
+@@ -265,2 +252,3 @@
+ 	return 0;
+ }
++#endif
+diff --git a/smallworld/main.cpp b/smallworld/main.cpp
+--- a/smallworld/main.cpp
++++ b/smallworld/main.cpp
+@@ -47,23 +47,19 @@
+ }
+ 
+-int main(){
+-	
++int main(int argc, char* argv[]){
++	const RunOptions options = parseRunOptions(argc, argv);
++
+ 	//omp_set_num_threads(20);
+ 	//initialize random number generator
+ 	srand (time(NULL));
+ 	//srand (1);
+-	clock_t begin = clock();
+ #ifndef WIN32
+ 	srand48(time(NULL));
+ 	//srand48(1);
+ #endif
+-	Param* param;
+-	parse(param);
+-	Layer pyramidLayer(100,100);
+-	pyramidLayer.addNeurons(param);
+-	pyramidLayer.addSynapse(0, param);
+-	pyramidLayer.stimulateNeurons();	
+-	clock_t end = clock();
+-	double time_secs = double(end - begin) / CLOCKS_PER_SEC;
+-	//cout << "Time in secs:" << " " << time_secs << endl;
+-}
+\ No newline at end of file
++	Param param{};
++	if (options.resume.empty())
++		parse(&param);
++	Layer pyramidLayer(100,100, options.perNeuronOutput);
++	return pyramidLayer.simulate(param, options, Topology::smallworld);
++}
+diff --git a/smallworld/neuron.h b/smallworld/neuron.h
+--- a/smallworld/neuron.h
++++ b/smallworld/neuron.h
+@@ -45,4 +45,5 @@
+ 
+ class Neuron{
++	friend class NetworkSnapshot;
+ 	//parameters from the MacGregor Neuron Model. 
+ 	//for details, refer: "A Model for Repetitive Firing in Neurons", MacGregor, R. J. and Oliver, R. M., Kybernetik, 1974.
+diff --git a/smallworld/layer.h b/smallworld/layer.h
+--- a/smallworld/layer.h
++++ b/smallworld/layer.h
+@@ -1,17 +1,21 @@
+ #include "neuron.h"
++#include "../run_options.h"
+ 
+ 
+ class Layer{
+ 	int rows, clms;
+-	double **availableGlutamate, **releasableGlutamate;
++	bool perNeuronOutput;
+ 	//NeuronLayer is a matrix of neurons
+-	Neuron **NeuronLayer;
++	Neuron **NeuronLayer = nullptr;
+ 	//ConnectionMatrix is a matrix of vectors; each vector contains the incoming synapses to the neuron at that location
+-	vector<Synapse> **ConnectionMatrix;
++	vector<Synapse> **ConnectionMatrix = nullptr;
++	void allocateConnections();
+ public:
+-	Layer(int row, int clm);
++	Layer(int row, int clm, bool perNeuronOutput = false);
+ 	int addNeurons(Param* param);
+ 	int addSynapse(int no_wts, Param* param);
+-	int stimulateNeurons();
+-	int recordPotential(int iterations);
++	~Layer();
++	Layer(const Layer&) = delete;
++	Layer& operator=(const Layer&) = delete;
++	int simulate(Param& param, const RunOptions& options, Topology topology);
+ };
+diff --git a/smallworld/layer.cpp b/smallworld/layer.cpp
+--- a/smallworld/layer.cpp
++++ b/smallworld/layer.cpp
+@@ -1,17 +1,10 @@
+ 
+ #include "layer.h"
++#include "../neuron_output.h"
+ 
+ double distribution_max;
+ 
+-Layer::Layer(int row, int clm){
+-	rows = row;
+-	clms = clm;
+-	availableGlutamate = new double*[row]();
+-	for(int i = 0; i < row; i++)
+-		availableGlutamate[i] = new double[clm]();
+-	releasableGlutamate = new double*[row]();
+-	for(int i = 0; i < row; i++)
+-		releasableGlutamate[i] = new double[clm]();
+-}
++Layer::Layer(int row, int clm, bool perNeuronOutput)
++    : rows(row), clms(clm), perNeuronOutput(perNeuronOutput) {}
+ 
+ int Layer::addNeurons(Param* param){
+@@ -29,6 +22,4 @@
+ 	for(i = 0; i < rows; i++){
+ 		for(j =0; j < clms; j++){
+-			availableGlutamate[i][j] = 0;
+-			releasableGlutamate[i][j] = 0;
+ 			NeuronLayer[i][j].row = i;
+ 			NeuronLayer[i][j].clm = j;		
+@@ -69,15 +60,9 @@
+ 	int i, j, k, m, n, count, connect, total_count = 0;
+ 	double d = param->Neighborhood, value, p, in_Glut, wt;
+-	double **trackweight;
+-	trackweight = new double*[rows*clms]();
+-	for(int i = 0; i < rows*clms; i++)
+-		trackweight[i] = new double[rows*clms]();
+-	FILE *gmFile = fopen("glutamatemap.txt","w");
+-	FILE *igmFile = fopen("initialglutamatemap.txt","w");
+-	FILE *wtFile = fopen("weightmap.txt","w");
+-	ConnectionMatrix  = new vector<Synapse>*[rows]();
+-	for(i = 0; i < rows; i++){
+-		ConnectionMatrix[i] = new vector<Synapse>[clms]();
+-	}
++	const auto glutamateMap = openOutputFile("glutamatemap.txt", perNeuronOutput);
++	const auto initialGlutamateMap = openOutputFile("initialglutamatemap.txt", perNeuronOutput);
++	const auto weightMap = openOutputFile("weightmap.txt", perNeuronOutput);
++	vector<double> weightRow(perNeuronOutput ? rows * clms : 0);
++	allocateConnections();
+ //#pragma omp parallel for private(i,j,k,p,value,count,m,n)
+ 	for(i = 0; i < rows; i++){
+@@ -96,5 +81,4 @@
+ 					value = drand48();
+ 					ConnectionMatrix[i][j][count].weight = value;
+-					trackweight[i*rows+j][m*rows+n] = value;
+ 					if(NeuronLayer[m][n].excitatory){
+ 						ConnectionMatrix[i][j][count].excitatory = true;
+@@ -108,5 +92,8 @@
+ 						ConnectionMatrix[i][j][count].NR    = 0;
+ 					}
+-					in_Glut = in_Glut + ConnectionMatrix[i][j][count].NRmax;
++					if (perNeuronOutput) {
++						weightRow[m * clms + n] = value;
++						in_Glut += ConnectionMatrix[i][j][count].NRmax;
++					}
+ 					count = count+1;
+ 					//fprintf(cFile,"%f ",value);
+@@ -118,6 +105,9 @@
+ 				p = drand48();
+ 				if( (p < 0.25) ){ 
+-					in_Glut = in_Glut - ConnectionMatrix[i][j][k].NRmax;
+-					trackweight[i*rows+j][ConnectionMatrix[i][j][k].row*rows+ConnectionMatrix[i][j][k].clm] = 0;
++					if (perNeuronOutput) {
++						const Synapse& removed = ConnectionMatrix[i][j][k];
++						in_Glut -= removed.NRmax;
++						weightRow[removed.row * clms + removed.clm] = 0;
++					}
+ 					ConnectionMatrix[i][j].erase(ConnectionMatrix[i][j].begin()+k);
+ 					count = count - 1;					
+@@ -133,5 +123,4 @@
+ 							value = drand48();
+ 							ConnectionMatrix[i][j][count].weight = value;
+-							trackweight[i*rows+j][m*rows+n] = value;
+ 							if(NeuronLayer[m][n].excitatory){
+ 								ConnectionMatrix[i][j][count].excitatory = true;
+@@ -145,5 +134,8 @@
+ 								ConnectionMatrix[i][j][count].NR    = 0;
+ 							}
+-							in_Glut = in_Glut + ConnectionMatrix[i][j][count].NRmax;
++							if (perNeuronOutput) {
++								weightRow[m * clms + n] = value;
++								in_Glut += ConnectionMatrix[i][j][count].NRmax;
++							}
+ 							count = count+1;
+ 						}
+@@ -154,7 +146,11 @@
+   			//cout << count << " " ;
+ 			total_count = total_count + count;
+-			fprintf(gmFile,"%f ", in_Glut);
+-		}
+-		fprintf(gmFile,"\n");
++			if (perNeuronOutput) {
++				fprintf(glutamateMap.get(), "%f ", in_Glut);
++				writeWeightRow(weightMap.get(), weightRow);
++			}
++		}
++		if (perNeuronOutput)
++			fputc('\n', glutamateMap.get());
+ 	}
+ 	//cout << total_count << endl;
+@@ -171,24 +167,20 @@
+ 			in_Glut = 0;
+ 			for(count = 0; count < ConnectionMatrix[i][j].size(); count++){
+-				in_Glut = in_Glut + ConnectionMatrix[i][j][count].NR;
++				if (perNeuronOutput)
++					in_Glut += ConnectionMatrix[i][j][count].NR;
+ 				if(ConnectionMatrix[i][j][count].excitatory)
+ 					NeuronLayer[ConnectionMatrix[i][j][count].row][ConnectionMatrix[i][j][count].clm].glutamate += ConnectionMatrix[i][j][count].NR;
+ 			}
+-			fprintf(igmFile,"%f ", in_Glut);
+-		}
+-		fprintf(igmFile,"\n");
+-	}
+-	for(i = 0; i < rows*clms; i++){
+-		for(j = 0; j < rows*clms; j++){
+-			fprintf(wtFile,"%f ", trackweight[i][j]);
+-		}
+-		fprintf(wtFile,"\n");
+-	}
+-	fclose(gmFile);
+-	fclose(igmFile);
+-	fclose(wtFile);
+-	return 0;
+-}
+-
++			if (perNeuronOutput)
++				fprintf(initialGlutamateMap.get(), "%f ", in_Glut);
++		}
++		if (perNeuronOutput)
++			fputc('\n', initialGlutamateMap.get());
++	}
++	return 0;
++}
++
++// simulation.cpp supplies the recording-enabled loop for this build.
++#if 0
+ int Layer::stimulateNeurons(){
+ 	int index, iterations;
+@@ -300,2 +292,3 @@
+ 	return 0;
+ }
++#endif
+diff --git a/scalefree/main.cpp b/scalefree/main.cpp
+--- a/scalefree/main.cpp
++++ b/scalefree/main.cpp
+@@ -47,23 +47,19 @@
+ }
+ 
+-int main(){
+-	
++int main(int argc, char* argv[]){
++	const RunOptions options = parseRunOptions(argc, argv);
++
+ 	//omp_set_num_threads(20);
+ 	//initialize random number generator
+ 	srand (time(NULL));
+ 	//srand (1);
+-	clock_t begin = clock();
+ #ifndef WIN32
+ 	srand48(time(NULL));
+ 	//srand48(1);
+ #endif
+-	Param* param;
+-	parse(param);
+-	Layer pyramidLayer(100,100);
+-	pyramidLayer.addNeurons(param);
+-	pyramidLayer.addSynapse(0, param);
+-	pyramidLayer.stimulateNeurons();	
+-	clock_t end = clock();
+-	double time_secs = double(end - begin) / CLOCKS_PER_SEC;
+-	//cout << "Time in secs:" << " " << time_secs << endl;
+-}
+\ No newline at end of file
++	Param param{};
++	if (options.resume.empty())
++		parse(&param);
++	Layer pyramidLayer(100,100, options.perNeuronOutput);
++	return pyramidLayer.simulate(param, options, Topology::scalefree);
++}
+diff --git a/scalefree/neuron.h b/scalefree/neuron.h
+--- a/scalefree/neuron.h
++++ b/scalefree/neuron.h
+@@ -45,4 +45,5 @@
+ 
+ class Neuron{
++	friend class NetworkSnapshot;
+ 	//parameters from the MacGregor Neuron Model. 
+ 	//for details, refer: "A Model for Repetitive Firing in Neurons", MacGregor, R. J. and Oliver, R. M., Kybernetik, 1974.
+diff --git a/scalefree/layer.h b/scalefree/layer.h
+--- a/scalefree/layer.h
++++ b/scalefree/layer.h
+@@ -1,17 +1,21 @@
+ #include "neuron.h"
++#include "../run_options.h"
+ 
+ 
+ class Layer{
+ 	int rows, clms;
+-	double **availableGlutamate, **releasableGlutamate;
++	bool perNeuronOutput;
+ 	//NeuronLayer is a matrix of neurons
+-	Neuron **NeuronLayer;
++	Neuron **NeuronLayer = nullptr;
+ 	//ConnectionMatrix is a matrix of vectors; each vector contains the incoming synapses to the neuron at that location
+-	vector<Synapse> **ConnectionMatrix;
++	vector<Synapse> **ConnectionMatrix = nullptr;
++	void allocateConnections();
+ public:
+-	Layer(int row, int clm);
++	Layer(int row, int clm, bool perNeuronOutput = false);
+ 	int addNeurons(Param* param);
+ 	int addSynapse(int no_wts, Param* param);
+-	int stimulateNeurons();
+-	int recordPotential(int iterations);
++	~Layer();
++	Layer(const Layer&) = delete;
++	Layer& operator=(const Layer&) = delete;
++	int simulate(Param& param, const RunOptions& options, Topology topology);
+ };
+diff --git a/scalefree/layer.cpp b/scalefree/layer.cpp
+--- a/scalefree/layer.cpp
++++ b/scalefree/layer.cpp
+@@ -1,17 +1,10 @@
+ 
+ #include "layer.h"
++#include "../neuron_output.h"
+ 
+ double distribution_max;
+ 
+-Layer::Layer(int row, int clm){
+-	rows = row;
+-	clms = clm;
+-	availableGlutamate = new double*[row]();
+-	for(int i = 0; i < row; i++)
+-		availableGlutamate[i] = new double[clm]();
+-	releasableGlutamate = new double*[row]();
+-	for(int i = 0; i < row; i++)
+-		releasableGlutamate[i] = new double[clm]();
+-}
++Layer::Layer(int row, int clm, bool perNeuronOutput)
++    : rows(row), clms(clm), perNeuronOutput(perNeuronOutput) {}
+ 
+ int Layer::addNeurons(Param* param){
+@@ -29,6 +22,4 @@
+ 	for(i = 0; i < rows; i++){
+ 		for(j =0; j < clms; j++){
+-			availableGlutamate[i][j] = 0;
+-			releasableGlutamate[i][j] = 0;
+ 			NeuronLayer[i][j].row = i;
+ 			NeuronLayer[i][j].clm = j;		
+@@ -69,15 +60,9 @@
+ 	int i, j, k, m, n, count, connect;
+ 	double d = param->Neighborhood, value, p, in_Glut, wt;
+-	double **trackweight;
+-	trackweight = new double*[rows*clms]();
+-	for(int i = 0; i < rows*clms; i++)
+-		trackweight[i] = new double[rows*clms]();	
+-	FILE *gmFile = fopen("glutamatemap.txt","w");
+-	FILE *igmFile = fopen("initialglutamatemap.txt","w");
+-	FILE *wtFile = fopen("weightmap.txt","w");
+-	ConnectionMatrix  = new vector<Synapse>*[rows]();
+-	for(i = 0; i < rows; i++){
+-		ConnectionMatrix[i] = new vector<Synapse>[clms]();
+-	}
++	const auto glutamateMap = openOutputFile("glutamatemap.txt", perNeuronOutput);
++	const auto initialGlutamateMap = openOutputFile("initialglutamatemap.txt", perNeuronOutput);
++	const auto weightMap = openOutputFile("weightmap.txt", perNeuronOutput);
++	vector<double> weightRow(perNeuronOutput ? rows * clms : 0);
++	allocateConnections();
+ //generate a 100 by 100 connectivity array, where each value denotes the number of connections that particular neuron will have. 
+ //the values in the connectivity array should follow a scale free distribution 
+@@ -126,5 +111,4 @@
+ 					value = drand48();
+ 					ConnectionMatrix[i][j][count].weight = value;
+-					trackweight[i*rows+j][m*rows+n] = value;
+ 					if(NeuronLayer[m][n].excitatory){
+ 						ConnectionMatrix[i][j][count].excitatory = true;
+@@ -138,5 +122,8 @@
+ 						ConnectionMatrix[i][j][count].NR    = 0;
+ 					}
+-					in_Glut = in_Glut + ConnectionMatrix[i][j][count].NRmax;
++					if (perNeuronOutput) {
++						weightRow[m * clms + n] = value;
++						in_Glut += ConnectionMatrix[i][j][count].NRmax;
++					}
+ 					count = count+1;
+ 					//fprintf(cFile,"%f ",value);
+@@ -144,12 +131,16 @@
+ 				}
+ 			}
+-			cout << count << " " ;
+-			//if(count < d)
+-				totalprob += count;
+-			fprintf(gmFile,"%f ", in_Glut);
+-		}
+-		fprintf(gmFile,"\n");
+-	}
+-	cout << endl;
++			totalprob += count;
++			if (perNeuronOutput) {
++				cout << count << " ";
++				fprintf(glutamateMap.get(), "%f ", in_Glut);
++				writeWeightRow(weightMap.get(), weightRow);
++			}
++		}
++		if (perNeuronOutput)
++			fputc('\n', glutamateMap.get());
++	}
++	if (perNeuronOutput)
++		cout << endl;
+ 	cout << totalprob << endl;
+ //exit(0);	
+@@ -165,24 +156,20 @@
+ 			in_Glut = 0;
+ 			for(count = 0; count < ConnectionMatrix[i][j].size(); count++){
+-				in_Glut = in_Glut + ConnectionMatrix[i][j][count].NR;
++				if (perNeuronOutput)
++					in_Glut += ConnectionMatrix[i][j][count].NR;
+ 				if(ConnectionMatrix[i][j][count].excitatory)
+ 					NeuronLayer[ConnectionMatrix[i][j][count].row][ConnectionMatrix[i][j][count].clm].glutamate += ConnectionMatrix[i][j][count].NR;
+ 			}
+-			fprintf(igmFile,"%f ", in_Glut);
+-		}
+-		fprintf(igmFile,"\n");
+-	}
+-	for(i = 0; i < rows*clms; i++){
+-		for(j = 0; j < rows*clms; j++){
+-			fprintf(wtFile,"%f ", trackweight[i][j]);
+-		}
+-		fprintf(wtFile,"\n");
+-	}
+-	fclose(gmFile);
+-	fclose(igmFile);
+-	fclose(wtFile);
+-	return 0;
+-}
+-
++			if (perNeuronOutput)
++				fprintf(initialGlutamateMap.get(), "%f ", in_Glut);
++		}
++		if (perNeuronOutput)
++			fputc('\n', initialGlutamateMap.get());
++	}
++	return 0;
++}
++
++// simulation.cpp supplies the recording-enabled loop for this build.
++#if 0
+ int Layer::stimulateNeurons(){
+ 	int index, iterations;
+@@ -294,2 +281,3 @@
+ 	return 0;
+ }
++#endif

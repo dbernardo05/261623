@@ -1,17 +1,21 @@
 #include "neuron.h"
+#include "../run_options.h"
 
 
 class Layer{
 	int rows, clms;
-	double **availableGlutamate, **releasableGlutamate;
+	bool perNeuronOutput;
 	//NeuronLayer is a matrix of neurons
-	Neuron **NeuronLayer;
+	Neuron **NeuronLayer = nullptr;
 	//ConnectionMatrix is a matrix of vectors; each vector contains the incoming synapses to the neuron at that location
-	vector<Synapse> **ConnectionMatrix;
+	vector<Synapse> **ConnectionMatrix = nullptr;
+	void allocateConnections();
 public:
-	Layer(int row, int clm);
+	Layer(int row, int clm, bool perNeuronOutput = false);
 	int addNeurons(Param* param);
 	int addSynapse(int no_wts, Param* param);
-	int stimulateNeurons();
-	int recordPotential(int iterations);
+	~Layer();
+	Layer(const Layer&) = delete;
+	Layer& operator=(const Layer&) = delete;
+	int simulate(Param& param, const RunOptions& options, Topology topology);
 };

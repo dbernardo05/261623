@@ -44,6 +44,7 @@ struct Synapse{
 };
 
 class Neuron{
+	friend class NetworkSnapshot;
 	//parameters from the MacGregor Neuron Model. 
 	//for details, refer: "A Model for Repetitive Firing in Neurons", MacGregor, R. J. and Oliver, R. M., Kybernetik, 1974.
 	double Tmem, Th0;

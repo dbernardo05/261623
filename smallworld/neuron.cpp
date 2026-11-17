@@ -1,5 +1,6 @@
 
 #include "neuron.h"
+#include "../membrane_noise.h"
 
 Neuron::Neuron(){
 	//initialize excitatory neurons
@@ -13,6 +14,7 @@ Neuron::Neuron(){
 	Te1	  = 0.2, Te2 = 10, Ti1 = 0.2, Ti2 = 20;  
 	TauRelease = 1; TauReplenish = 8000; SpontRelease = 0.0001;
 	glutamate = 0;
+	gaba = 0;
 	S	  = 0, P = 0;
 	for(int i=0; i< 151; i++){
 		Ge_table.push_back( (Te1 * Te2 / (Te1 - Te2)) * (exp(-i/Te1) - exp(-i/Te2)) );
@@ -48,13 +50,10 @@ int Neuron::computePotential(vector<Synapse> &preSynapses, double SC, int time){
 	//compute potential of individual neurons
 	unsigned int i,j;
 	Ge = 0, Gi = 0, glutamate = 0, gaba = 0;
-	double mean = 0, stddev = 1.0, value, dist;
+	double value, dist;
 	int prob_Index;
 	
-	//one noise generator per OpenMP thread, seeded once on the thread's first call,
-	//so that every call draws a new value
-	static thread_local mt19937 generator(random_device{}());
-	static thread_local normal_distribution<double> distribution(mean,stddev);
+	auto& noise = membraneNoise();
 	for(i = 0; i < preSynapses.size(); i++){
 		dist = sqrt((row - preSynapses[i].row)*(row - preSynapses[i].row) + (clm - preSynapses[i].clm)*(clm - preSynapses[i].clm));
 		if(dist > 25)
@@ -83,7 +82,7 @@ int Neuron::computePotential(vector<Synapse> &preSynapses, double SC, int time){
 
 	Gk = exp(-(double)1/Tgk)*Gk + B*S;
 	Th = exp(-(double)1/Tth)*Th + (1 - exp(-(double)1/Tth))*(Th0+c*E);	
-	E  = exp(-((double)1+Gk+Ge+Gi)/(double)5)*E + (((double)1 - exp(-((double)1+Gk+Ge+Gi)/(double)5))*(SC+(double)7*Ge-(double)1*Gi-(double)1*Gk+distribution(generator)))/((double)1+Gk+Ge+Gi);
+	E  = exp(-((double)1+Gk+Ge+Gi)/(double)5)*E + (((double)1 - exp(-((double)1+Gk+Ge+Gi)/(double)5))*(SC+(double)7*Ge-(double)1*Gi-(double)1*Gk+noise.distribution(noise.generator)))/((double)1+Gk+Ge+Gi);
 	if(E < -5)
 		E = -5;
 	if(E > 10)
